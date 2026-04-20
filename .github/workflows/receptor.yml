@@ -112,14 +112,23 @@ jobs:
             docker pull 004533149070.dkr.ecr.us-east-1.amazonaws.com/receptor-boletines-750843:$IMAGE_TAG
             docker stop receptor 2>/dev/null || true
             docker rm receptor 2>/dev/null || true
-            docker run -d --name receptor --restart unless-stopped \
-              -e AWS_REGION=us-east-1 \
-              -e AWS_ACCESS_KEY="$APP_AWS_ACCESS_KEY" \
-              -e AWS_SECRET_KEY="$APP_AWS_SECRET_KEY" \
-              -e AWS_SESSION_TOKEN="$APP_AWS_SESSION_TOKEN" \
-              -e SQS_URL="$SQS_URL" \
-              -e DYNAMO_TABLE="$DYNAMO_TABLE" \
-              -e SNS_TOPIC_ARN="$SNS_TOPIC_ARN" \
-              -e APP_URL="$APP_URL" \
-              004533149070.dkr.ecr.us-east-1.amazonaws.com/receptor-boletines-750843:$IMAGE_TAG
+            run_receptor() {
+              local NAME=$1
+              docker run -d --name receptor --restart unless-stopped \
+                --log-driver=awslogs \
+                --log-opt awslogs-region=us-east-1 \
+                --log-opt awslogs-group=/boletines/emisor \
+                --log-opt awslogs-create-group=true \
+                -e AWS_REGION=us-east-1 \
+                -e AWS_ACCESS_KEY="$APP_AWS_ACCESS_KEY" \
+                -e AWS_SECRET_KEY="$APP_AWS_SECRET_KEY" \
+                -e AWS_SESSION_TOKEN="$APP_AWS_SESSION_TOKEN" \
+                -e SQS_URL="$SQS_URL" \
+                -e DYNAMO_TABLE="$DYNAMO_TABLE" \
+                -e SNS_TOPIC_ARN="$SNS_TOPIC_ARN" \
+                -e APP_URL="$APP_URL" \
+                004533149070.dkr.ecr.us-east-1.amazonaws.com/receptor-boletines-750843:$IMAGE_TAG
+            }
+            run_receptor receptor-1
+            run_receptor receptor-2
             docker ps --filter name=receptor
