@@ -104,6 +104,9 @@ jobs:
           envs: APP_AWS_ACCESS_KEY,APP_AWS_SECRET_KEY,APP_AWS_SESSION_TOKEN,SQS_URL,DYNAMO_TABLE,SNS_TOPIC_ARN,APP_URL,IMAGE_TAG
           script: |
             set -e
+            export AWS_ACCESS_KEY_ID="$APP_AWS_ACCESS_KEY"
+            export AWS_SECRET_ACCESS_KEY="$APP_AWS_SECRET_KEY"
+            export AWS_SESSION_TOKEN="$APP_AWS_SESSION_TOKEN"
             aws ecr get-login-password --region us-east-1 \
               | docker login --username AWS --password-stdin 004533149070.dkr.ecr.us-east-1.amazonaws.com
             docker pull 004533149070.dkr.ecr.us-east-1.amazonaws.com/receptor-boletines-750843:$IMAGE_TAG
