@@ -114,10 +114,13 @@ jobs:
             docker rm receptor 2>/dev/null || true
             run_receptor() {
               local NAME=$1
-              docker run -d --name receptor --restart unless-stopped \
+              docker stop $NAME 2>/dev/null || true
+              docker rm $NAME 2>/dev/null || true
+              docker run -d --name $NAME --restart unless-stopped \
                 --log-driver=awslogs \
                 --log-opt awslogs-region=us-east-1 \
-                --log-opt awslogs-group=/boletines/emisor \
+                --log-opt awslogs-group=/boletines/receptor \
+                --log-opt awslogs-stream=$NAME \
                 --log-opt awslogs-create-group=true \
                 -e AWS_REGION=us-east-1 \
                 -e AWS_ACCESS_KEY="$APP_AWS_ACCESS_KEY" \
