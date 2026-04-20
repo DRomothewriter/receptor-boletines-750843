@@ -1,0 +1,122 @@
+name: CI/CD - Receptor
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'receptor.ts'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'tsconfig.json'
+      - 'Dockerfile.receptor'
+      - '.github/workflows/receptor.yml'
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REGISTRY: 004533149070.dkr.ecr.us-east-1.amazonaws.com
+  ECR_REPOSITORY: receptor-boletines-750843
+  CONTAINER_NAME: receptor
+
+jobs:
+  build:
+    name: Build (compilar TypeScript)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Compile TypeScript
+        run: npm run build
+
+      - name: Upload dist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: receptor-dist
+          path: dist/
+          retention-days: 1
+
+  docker:
+    name: Docker (build & push a ECR)
+    needs: build
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.meta.outputs.image_tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Compute image tag
+        id: meta
+        run: echo "image_tag=${GITHUB_SHA::7}-${{ github.run_number }}" >> $GITHUB_OUTPUT
+
+      - name: Build, tag and push
+        env:
+          IMAGE_TAG: ${{ steps.meta.outputs.image_tag }}
+        run: |
+          docker build -f Dockerfile.receptor \
+            -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
+            -t $ECR_REGISTRY/$ECR_REPOSITORY:latest .
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          echo "Imagen publicada: $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+
+  deploy:
+    name: Deploy (desplegar en EC2)
+    needs: docker
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          APP_AWS_ACCESS_KEY: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          APP_AWS_SECRET_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          APP_AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
+          SQS_URL: ${{ secrets.SQS_URL }}
+          DYNAMO_TABLE: ${{ secrets.DYNAMO_TABLE }}
+          SNS_TOPIC_ARN: ${{ secrets.SNS_TOPIC_ARN }}
+          APP_URL: ${{ secrets.APP_URL }}
+          IMAGE_TAG: ${{ needs.docker.outputs.image_tag }}
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ec2-user
+          key: ${{ secrets.EC2_SSH_KEY }}
+          envs: APP_AWS_ACCESS_KEY,APP_AWS_SECRET_KEY,APP_AWS_SESSION_TOKEN,SQS_URL,DYNAMO_TABLE,SNS_TOPIC_ARN,APP_URL,IMAGE_TAG
+          script: |
+            set -e
+            aws ecr get-login-password --region us-east-1 \
+              | docker login --username AWS --password-stdin 004533149070.dkr.ecr.us-east-1.amazonaws.com
+            docker pull 004533149070.dkr.ecr.us-east-1.amazonaws.com/receptor-boletines-750843:$IMAGE_TAG
+            docker stop receptor 2>/dev/null || true
+            docker rm receptor 2>/dev/null || true
+            docker run -d --name receptor --restart unless-stopped \
+              -e AWS_REGION=us-east-1 \
+              -e AWS_ACCESS_KEY="$APP_AWS_ACCESS_KEY" \
+              -e AWS_SECRET_KEY="$APP_AWS_SECRET_KEY" \
+              -e AWS_SESSION_TOKEN="$APP_AWS_SESSION_TOKEN" \
+              -e SQS_URL="$SQS_URL" \
+              -e DYNAMO_TABLE="$DYNAMO_TABLE" \
+              -e SNS_TOPIC_ARN="$SNS_TOPIC_ARN" \
+              -e APP_URL="$APP_URL" \
+              004533149070.dkr.ecr.us-east-1.amazonaws.com/receptor-boletines-750843:$IMAGE_TAG
+            docker ps --filter name=receptor
